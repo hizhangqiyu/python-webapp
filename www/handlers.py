@@ -48,8 +48,7 @@ def text2html(text):
     lines = map(lambda s: '<p>%s</p>' % s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'), filter(lambda s: s.strip() != '', text.split('\n')))
     return ''.join(lines)
 
-@asyncio.coroutine
-def cookie2user(cookie_str):
+async def cookie2user(cookie_str):
     '''
     Parse cookie and load user if cookie is valid.
     '''
@@ -62,7 +61,7 @@ def cookie2user(cookie_str):
         uid, expires, sha1 = L
         if int(expires) < time.time():
             return None
-        user = yield from User.find(uid)
+        user = await User.find(uid)
         if user is None:
             return None
         s = '%s-%s-%s-%s' % (uid, user.passwd, expires, _COOKIE_KEY)
@@ -76,14 +75,14 @@ def cookie2user(cookie_str):
         return None
 
 @get('/')
-def index(*, page='1'):
+async def index(*, page='1'):
     page_index = get_page_index(page)
-    num = yield from Blog.findNumber('count(id)')
+    num = await Blog.findNumber('count(id)')
     page = Page(num)
     if num == 0:
         blogs = []
     else:
-        blogs = yield from Blog.findAll(orderBy='created_at desc', limit=(page.offset, page.limit))
+        blogs = await Blog.findAll(orderBy='created_at desc', limit=(page.offset, page.limit))
     return {
         '__template__': 'blogs.html',
         'page': page,
@@ -91,9 +90,9 @@ def index(*, page='1'):
     }
 
 @get('/blog/{id}')
-def get_blog(id):
-    blog = yield from Blog.find(id)
-    comments = yield from Comment.findAll('blog_id=?', [id], orderBy='created_at desc')
+async def get_blog(id):
+    blog = await Blog.find(id)
+    comments = await Comment.findAll('blog_id=?', [id], orderBy='created_at desc')
     for c in comments:
         c.html_content = text2html(c.content)
     blog.html_content = markdown2.markdown(blog.content)
@@ -116,12 +115,12 @@ def signin():
     }
 
 @post('/api/authenticate')
-def authenticate(*, email, passwd):
+async def authenticate(*, email, passwd):
     if not email:
         raise APIValueError('email', 'Invalid email.')
     if not passwd:
         raise APIValueError('passwd', 'Invalid password.')
-    users = yield from User.findAll('email=?', [email])
+    users = await User.findAll('email=?', [email])
     if len(users) == 0:
         raise APIValueError('email', 'Email not exist.')
     user = users[0]
@@ -190,46 +189,46 @@ def manage_users(*, page='1'):
     }
 
 @get('/api/comments')
-def api_comments(*, page='1'):
+async def api_comments(*, page='1'):
     page_index = get_page_index(page)
-    num = yield from Comment.findNumber('count(id)')
+    num = await Comment.findNumber('count(id)')
     p = Page(num, page_index)
     if num == 0:
         return dict(page=p, comments=())
-    comments = yield from Comment.findAll(orderBy='created_at desc', limit=(p.offset, p.limit))
+    comments = await Comment.findAll(orderBy='created_at desc', limit=(p.offset, p.limit))
     return dict(page=p, comments=comments)
 
 @post('/api/blogs/{id}/comments')
-def api_create_comment(id, request, *, content):
+async def api_create_comment(id, request, *, content):
     user = request.__user__
     if user is None:
         raise APIPermissionError('Please signin first.')
     if not content or not content.strip():
         raise APIValueError('content')
-    blog = yield from Blog.find(id)
+    blog = await Blog.find(id)
     if blog is None:
         raise APIResourceNotFoundError('Blog')
     comment = Comment(blog_id=blog.id, user_id=user.id, user_name=user.name, user_image=user.image, content=content.strip())
-    yield from comment.save()
+    await comment.save()
     return comment
 
 @post('/api/comments/{id}/delete')
-def api_delete_comments(id, request):
+async def api_delete_comments(id, request):
     check_admin(request)
-    c = yield from Comment.find(id)
+    c = await Comment.find(id)
     if c is None:
         raise APIResourceNotFoundError('Comment')
-    yield from c.remove()
+    await c.remove()
     return dict(id=id)
 
 @get('/api/users')
-def api_get_users(*, page='1'):
+async def api_get_users(*, page='1'):
     page_index = get_page_index(page)
-    num = yield from User.findNumber('count(id)')
+    num = await User.findNumber('count(id)')
     p = Page(num, page_index)
     if num == 0:
         return dict(page=p, users=())
-    users = yield from User.findAll(orderBy='created_at desc', limit=(p.offset, p.limit))
+    users = await User.findAll(orderBy='created_at desc', limit=(p.offset, p.limit))
     for u in users:
         u.passwd = '******'
     return dict(page=p, users=users)
@@ -238,20 +237,20 @@ _RE_EMAIL = re.compile(r'^[a-z0-9\.\-\_]+\@[a-z0-9\-\_]+(\.[a-z0-9\-\_]+){1,4}$'
 _RE_SHA1 = re.compile(r'^[0-9a-f]{40}$')
 
 @post('/api/users')
-def api_register_user(*, email, name, passwd):
+async def api_register_user(*, email, name, passwd):
     if not name or not name.strip():
         raise APIValueError('name')
     if not email or not _RE_EMAIL.match(email):
         raise APIValueError('email')
     if not passwd or not _RE_SHA1.match(passwd):
         raise APIValueError('passwd')
-    users = yield from User.findAll('email=?', [email])
+    users = await User.findAll('email=?', [email])
     if len(users) > 0:
         raise APIError('register:failed', 'email', 'Email is already in use.')
     uid = next_id()
     sha1_passwd = '%s:%s' % (uid, passwd)
     user = User(id=uid, name=name.strip(), email=email, passwd=hashlib.sha1(sha1_passwd.encode('utf-8')).hexdigest(), image='http://www.gravatar.com/avatar/%s?d=mm&s=120' % hashlib.md5(email.encode('utf-8')).hexdigest())
-    yield from user.save()
+    await user.save()
     # make session cookie:
     r = web.Response()
     r.set_cookie(COOKIE_NAME, user2cookie(user, 86400), max_age=86400, httponly=True)
@@ -261,22 +260,22 @@ def api_register_user(*, email, name, passwd):
     return r
 
 @get('/api/blogs')
-def api_blogs(*, page='1'):
+async def api_blogs(*, page='1'):
     page_index = get_page_index(page)
-    num = yield from Blog.findNumber('count(id)')
+    num = await Blog.findNumber('count(id)')
     p = Page(num, page_index)
     if num == 0:
         return dict(page=p, blogs=())
-    blogs = yield from Blog.findAll(orderBy='created_at desc', limit=(p.offset, p.limit))
+    blogs = await Blog.findAll(orderBy='created_at desc', limit=(p.offset, p.limit))
     return dict(page=p, blogs=blogs)
 
 @get('/api/blogs/{id}')
-def api_get_blog(*, id):
-    blog = yield from Blog.find(id)
+async def api_get_blog(*, id):
+    blog = await Blog.find(id)
     return blog
 
 @post('/api/blogs')
-def api_create_blog(request, *, name, summary, content):
+async def api_create_blog(request, *, name, summary, content):
     check_admin(request)
     if not name or not name.strip():
         raise APIValueError('name', 'name cannot be empty.')
@@ -285,13 +284,13 @@ def api_create_blog(request, *, name, summary, content):
     if not content or not content.strip():
         raise APIValueError('content', 'content cannot be empty.')
     blog = Blog(user_id=request.__user__.id, user_name=request.__user__.name, user_image=request.__user__.image, name=name.strip(), summary=summary.strip(), content=content.strip())
-    yield from blog.save()
+    await blog.save()
     return blog
 
 @post('/api/blogs/{id}')
-def api_update_blog(id, request, *, name, summary, content):
+async def api_update_blog(id, request, *, name, summary, content):
     check_admin(request)
-    blog = yield from Blog.find(id)
+    blog = await Blog.find(id)
     if not name or not name.strip():
         raise APIValueError('name', 'name cannot be empty.')
     if not summary or not summary.strip():
@@ -301,12 +300,12 @@ def api_update_blog(id, request, *, name, summary, content):
     blog.name = name.strip()
     blog.summary = summary.strip()
     blog.content = content.strip()
-    yield from blog.update()
+    await blog.update()
     return blog
 
 @post('/api/blogs/{id}/delete')
-def api_delete_blog(request, *, id):
+async def api_delete_blog(request, *, id):
     check_admin(request)
-    blog = yield from Blog.find(id)
-    yield from blog.remove()
+    blog = await Blog.find(id)
+    await blog.remove()
     return dict(id=id)
